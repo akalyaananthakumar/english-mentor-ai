@@ -3,10 +3,9 @@ const messages = document.getElementById("messages");
 const sendButton = document.getElementById("sendButton");
 const welcome = document.getElementById("welcome");
 
-
-// -----------------------------
+// ============================================================
 // SEND MESSAGE
-// -----------------------------
+// ============================================================
 
 async function sendMessage() {
 
@@ -17,7 +16,9 @@ async function sendMessage() {
     }
 
     // Hide welcome screen
-    welcome.style.display = "none";
+    if (welcome) {
+        welcome.style.display = "none";
+    }
 
     // Add user message
     addUserMessage(message);
@@ -27,60 +28,127 @@ async function sendMessage() {
 
     autoResize();
 
-    // Disable button
+    // Disable send button
     sendButton.disabled = true;
 
-    // Show typing
+    // Show typing indicator
     const typingElement = addTyping();
 
     try {
 
         const response = await fetch("/chat", {
-
             method: "POST",
 
             headers: {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Accept": "application/json"
             },
 
             body: JSON.stringify({
                 message: message
             })
-
         });
 
+        // ----------------------------------------------------
+        // CHECK HTTP RESPONSE
+        // ----------------------------------------------------
 
         if (!response.ok) {
-            throw new Error("Server error");
+
+            let errorMessage = "Server error.";
+
+            try {
+                const errorData = await response.json();
+
+                if (errorData.error) {
+                    errorMessage = errorData.error;
+                }
+
+            } catch (error) {
+                console.error("Could not read server error:", error);
+            }
+
+            throw new Error(errorMessage);
         }
 
+        // ----------------------------------------------------
+        // READ COMPLETE JSON RESPONSE
+        // ----------------------------------------------------
 
         const data = await response.json();
 
-        // Remove typing
-        typingElement.remove();
+        console.log("Complete server response:", data);
 
+        // Remove typing indicator
+        if (typingElement) {
+            typingElement.remove();
+        }
 
-        // Get AI response
-        const aiResponse =
-            data.response ||
-            data.reply ||
-            data.message ||
-            "Sorry, I couldn't generate a response.";
+        // ----------------------------------------------------
+        // CHECK BACKEND SUCCESS
+        // ----------------------------------------------------
 
+        if (!data.success) {
+
+            addAIMessage(
+                data.error ||
+                "Sorry, I couldn't generate a response."
+            );
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // GET COMPLETE AI RESPONSE
+        // ----------------------------------------------------
+
+        const aiResponse = data.reply;
+
+        console.log(
+            "AI response length:",
+            aiResponse ? aiResponse.length : 0
+        );
+
+        console.log(
+            "AI response:",
+            aiResponse
+        );
+
+        // ----------------------------------------------------
+        // CHECK EMPTY RESPONSE
+        // ----------------------------------------------------
+
+        if (
+            typeof aiResponse !== "string" ||
+            aiResponse.trim() === ""
+        ) {
+
+            addAIMessage(
+                "Sorry, I received an empty response. Please try again."
+            );
+
+            return;
+        }
+
+        // ----------------------------------------------------
+        // DISPLAY COMPLETE RESPONSE
+        // ----------------------------------------------------
 
         addAIMessage(aiResponse);
 
-
     } catch (error) {
 
-        typingElement.remove();
+        console.error("Chat error:", error);
+
+        if (typingElement) {
+            typingElement.remove();
+        }
 
         addAIMessage(
-            "⚠️ Sorry, something went wrong. Please try again."
+            "⚠️ " +
+            (error.message ||
+            "Sorry, something went wrong. Please try again.")
         );
-
-        console.error(error);
 
     } finally {
 
@@ -91,9 +159,9 @@ async function sendMessage() {
 }
 
 
-// -----------------------------
+// ============================================================
 // USER MESSAGE
-// -----------------------------
+// ============================================================
 
 function addUserMessage(text) {
 
@@ -102,7 +170,6 @@ function addUserMessage(text) {
     message.className = "message user-message";
 
     message.innerHTML = `
-
         <div class="message-content">
 
             <div class="message-name">
@@ -118,7 +185,6 @@ function addUserMessage(text) {
         <div class="avatar user-avatar">
             👤
         </div>
-
     `;
 
     messages.appendChild(message);
@@ -127,9 +193,9 @@ function addUserMessage(text) {
 }
 
 
-// -----------------------------
+// ============================================================
 // AI MESSAGE
-// -----------------------------
+// ============================================================
 
 function addAIMessage(text) {
 
@@ -138,7 +204,6 @@ function addAIMessage(text) {
     message.className = "message ai-message";
 
     message.innerHTML = `
-
         <div class="avatar ai-avatar">
             ✨
         </div>
@@ -149,12 +214,11 @@ function addAIMessage(text) {
                 English Mentor AI
             </div>
 
-            <div class="bubble">
+            <div class="bubble ai-response">
                 ${formatAIResponse(text)}
             </div>
 
         </div>
-
     `;
 
     messages.appendChild(message);
@@ -163,45 +227,78 @@ function addAIMessage(text) {
 }
 
 
-// -----------------------------
+// ============================================================
 // AI RESPONSE FORMATTER
-// -----------------------------
+// ============================================================
 
 function formatAIResponse(text) {
 
+    if (text === null || text === undefined) {
+        return "";
+    }
+
+    // Convert everything to string
+    text = String(text);
+
+    // IMPORTANT:
+    // Escape HTML FIRST for security
     let formatted = escapeHTML(text);
 
-    // Bold
+    // --------------------------------------------------------
+    // Markdown bold
+    // --------------------------------------------------------
+
     formatted = formatted.replace(
-        /\*\*(.*?)\*\*/g,
+        /\*\*(.+?)\*\*/g,
         "<strong>$1</strong>"
     );
 
-    // Headings
+    // --------------------------------------------------------
+    // Markdown headings
+    // --------------------------------------------------------
+
     formatted = formatted.replace(
-        /^### (.*?)$/gm,
+        /^### (.+)$/gm,
         "<strong>$1</strong>"
     );
 
-    // Line breaks
+    formatted = formatted.replace(
+        /^## (.+)$/gm,
+        "<strong>$1</strong>"
+    );
+
+    formatted = formatted.replace(
+        /^# (.+)$/gm,
+        "<strong>$1</strong>"
+    );
+
+    // --------------------------------------------------------
+    // Markdown bullet points
+    // --------------------------------------------------------
+
+    formatted = formatted.replace(
+        /^[-*] (.+)$/gm,
+        "• $1"
+    );
+
+    // --------------------------------------------------------
+    // Preserve line breaks
+    // --------------------------------------------------------
+
+    formatted = formatted.replace(/\r\n/g, "\n");
+
     formatted = formatted.replace(
         /\n/g,
         "<br>"
-    );
-
-    // Bullet points
-    formatted = formatted.replace(
-        /• /g,
-        "• "
     );
 
     return formatted;
 }
 
 
-// -----------------------------
+// ============================================================
 // TYPING INDICATOR
-// -----------------------------
+// ============================================================
 
 function addTyping() {
 
@@ -210,7 +307,6 @@ function addTyping() {
     message.className = "message ai-message";
 
     message.innerHTML = `
-
         <div class="avatar ai-avatar">
             ✨
         </div>
@@ -234,7 +330,6 @@ function addTyping() {
             </div>
 
         </div>
-
     `;
 
     messages.appendChild(message);
@@ -245,9 +340,9 @@ function addTyping() {
 }
 
 
-// -----------------------------
+// ============================================================
 // QUICK MESSAGE
-// -----------------------------
+// ============================================================
 
 function quickMessage(text) {
 
@@ -261,14 +356,13 @@ function quickMessage(text) {
 }
 
 
-// -----------------------------
+// ============================================================
 // CLEAR CHAT
-// -----------------------------
+// ============================================================
 
 function clearChat() {
 
     messages.innerHTML = `
-
         <div class="message ai-message">
 
             <div class="avatar ai-avatar">
@@ -303,20 +397,23 @@ function clearChat() {
             </div>
 
         </div>
-
     `;
 
-    welcome.style.display = "block";
+    if (welcome) {
+        welcome.style.display = "block";
+    }
 
     messageInput.value = "";
+
+    autoResize();
 
     messageInput.focus();
 }
 
 
-// -----------------------------
+// ============================================================
 // DARK MODE
-// -----------------------------
+// ============================================================
 
 function toggleTheme() {
 
@@ -332,19 +429,20 @@ function toggleTheme() {
 }
 
 
-// Load saved theme
+// ============================================================
+// LOAD SAVED THEME
+// ============================================================
 
 if (
-    localStorage.getItem("englishMentorTheme")
-    === "dark"
+    localStorage.getItem("englishMentorTheme") === "dark"
 ) {
     document.body.classList.add("dark");
 }
 
 
-// -----------------------------
+// ============================================================
 // ENTER TO SEND
-// -----------------------------
+// ============================================================
 
 function handleKeyDown(event) {
 
@@ -360,17 +458,24 @@ function handleKeyDown(event) {
 }
 
 
-// -----------------------------
+// ============================================================
 // AUTO RESIZE TEXTAREA
-// -----------------------------
+// ============================================================
 
-messageInput.addEventListener(
-    "input",
-    autoResize
-);
+if (messageInput) {
+
+    messageInput.addEventListener(
+        "input",
+        autoResize
+    );
+}
 
 
 function autoResize() {
+
+    if (!messageInput) {
+        return;
+    }
 
     messageInput.style.height = "auto";
 
@@ -382,14 +487,18 @@ function autoResize() {
 }
 
 
-// -----------------------------
+// ============================================================
 // SCROLL
-// -----------------------------
+// ============================================================
 
 function scrollToBottom() {
 
     const chatArea =
         document.getElementById("chatArea");
+
+    if (!chatArea) {
+        return;
+    }
 
     setTimeout(() => {
 
@@ -400,16 +509,16 @@ function scrollToBottom() {
 }
 
 
-// -----------------------------
+// ============================================================
 // ESCAPE HTML
-// -----------------------------
+// ============================================================
 
 function escapeHTML(text) {
 
     const div =
         document.createElement("div");
 
-    div.textContent = text;
+    div.textContent = String(text);
 
     return div.innerHTML;
 }
