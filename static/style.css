@@ -789,3 +789,110 @@ textarea::placeholder {
         padding: 12px 14px;
     }
 }
+/* ============================================================
+   AI RESPONSE - COMPLETE LONG RESPONSE FIX
+   ============================================================ */
+
+.ai-message {
+    align-items: flex-start;
+}
+
+.ai-message .message-content {
+    min-width: 0;
+    max-width: 75%;
+}
+
+.ai-message .bubble {
+    width: fit-content;
+    max-width: 100%;
+
+    height: auto;
+    min-height: 0;
+
+    overflow: visible;
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+
+    line-height: 1.7;
+
+    display: block;
+}
+
+/* Keep formatted AI responses fully visible */
+.ai-response {
+    height: auto;
+    max-height: none;
+
+    overflow: visible;
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* Make paragraphs readable */
+.ai-response p {
+    margin: 0 0 10px 0;
+}
+
+.ai-response p:last-child {
+    margin-bottom: 0;
+}
+
+/* Long words / URLs should not break the layout */
+.ai-response strong {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* Preserve spacing in long responses */
+.ai-response br {
+    line-height: 1.7;
+}
+
+
+/* ============================================================
+   MOBILE LONG RESPONSE FIX
+   ============================================================ */
+
+@media (max-width: 850px) {
+
+    .ai-message .message-content {
+        max-width: 88%;
+        min-width: 0;
+    }
+
+    .ai-message .bubble {
+        max-width: 100%;
+        overflow: visible;
+    }
+
+    .ai-response {
+        max-width: 100%;
+        overflow: visible;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+}
+
+
+@media (max-width: 500px) {
+
+    .ai-message .message-content {
+        max-width: calc(100vw - 75px);
+        min-width: 0;
+    }
+
+    .ai-message .bubble {
+        width: 100%;
+        max-width: 100%;
+        padding: 13px 14px;
+    }
+
+    .ai-response {
+        width: 100%;
+        max-width: 100%;
+    }
+}
