@@ -1,219 +1,472 @@
-from flask import Flask, render_template, request, jsonify
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
-
-import firebase_admin
-from firebase_admin import credentials, firestore
-
 import os
-from datetime import datetime
+from flask import Flask, render_template, request, jsonify
+from dotenv import load_dotenv
+from google import genai
+from chatbot_config import CHATBOT_SYSTEM_PROMPT
 
-
-# --------------------------------------------------
+# ============================================================
 # LOAD ENVIRONMENT VARIABLES
-# --------------------------------------------------
+# ============================================================
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-
-# --------------------------------------------------
-# CHECK GEMINI API KEY
-# --------------------------------------------------
-
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY is missing in .env file")
-
-
-# --------------------------------------------------
-# INITIALIZE GEMINI
-# --------------------------------------------------
-
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-
-# --------------------------------------------------
-# INITIALIZE FLASK
-# --------------------------------------------------
-
 app = Flask(__name__)
 
+# ============================================================
+# GEMINI CONFIGURATION
+# ============================================================
 
-# --------------------------------------------------
-# INITIALIZE FIREBASE
-# --------------------------------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-firebase_config = "firebase_config.json"
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY is not configured.")
 
-if not os.path.exists(firebase_config):
-    raise FileNotFoundError(
-        "firebase_config.json not found. "
-        "Download your Firebase service account key "
-        "and place it in the project folder."
+try:
+    client = (
+        genai.Client(api_key=GEMINI_API_KEY)
+        if GEMINI_API_KEY
+        else None
     )
 
-
-if not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_config)
-    firebase_admin.initialize_app(cred)
-
-
-db = firestore.client()
+except Exception as e:
+    print("Gemini initialization error:", e)
+    client = None
 
 
-# --------------------------------------------------
-# SYSTEM INSTRUCTION
-# --------------------------------------------------
+# ============================================================
+# OUT-OF-DOMAIN DETECTION
+# ============================================================
 
-SYSTEM_INSTRUCTION = """
-You are English Mentor AI, a friendly English learning assistant.
+OUT_OF_DOMAIN_KEYWORDS = [
+    "python programming",
+    "python code",
+    "javascript code",
+    "java programming",
+    "c programming",
+    "c++ programming",
+    "html code",
+    "css code",
+    "react code",
+    "flask code",
+    "django",
+    "programming",
+    "programming language",
+    "source code",
+    "write code",
+    "debug my code",
+    "fix my code",
+    "database",
+    "sql query",
+    "machine learning",
+    "deep learning",
+    "artificial intelligence",
+    "neural network",
+    "cybersecurity",
+    "cyber security",
+    "hacking",
+    "network security",
+    "mathematics",
+    "math problem",
+    "calculate",
+    "calculation",
+    "physics",
+    "chemistry",
+    "biology",
+    "photosynthesis",
+    "agriculture",
+    "farming",
+    "crop disease",
+    "weather forecast",
+    "politics",
+    "politician",
+    "stock market",
+    "cryptocurrency",
+    "cricket score",
+    "football score",
+    "movie recommendation",
+    "gaming",
+    "video game"
+]
 
-Your main purpose is to help users improve their English.
 
-You should:
+def is_clearly_out_of_domain(message):
+    """
+    Detect questions that are obviously unrelated to English learning.
 
-1. Help users practice English conversation.
-2. Correct grammar mistakes politely.
-3. Explain grammar in simple language.
-4. Improve incorrect sentences.
-5. Teach useful vocabulary.
-6. Give simple examples.
-7. Help with interview English.
-8. Help with professional English.
-9. Encourage the learner.
-10. Keep explanations clear and beginner-friendly.
+    This is only a first-level safety/domain filter.
+    The main English-only instruction is still enforced through
+    CHATBOT_SYSTEM_PROMPT.
+    """
 
-When the user writes an incorrect English sentence:
+    text = message.lower().strip()
 
-First:
-- Give the corrected sentence.
+    for keyword in OUT_OF_DOMAIN_KEYWORDS:
+        if keyword in text:
+            return True
 
-Then:
-- Briefly explain the mistake.
-
-Then:
-- Give one or two natural alternatives when useful.
-
-Do not make the response unnecessarily long.
-
-Example:
-
-User:
-I am go to college yesterday.
-
-Response:
-
-Correct sentence:
-I went to college yesterday.
-
-Why:
-Use "went" because "yesterday" refers to the past.
-
-Natural alternative:
-I went to college yesterday with my friends.
-
-Always behave like a supportive English mentor.
-"""
+    return False
 
 
-# --------------------------------------------------
+# ============================================================
 # HOME PAGE
-# --------------------------------------------------
+# ============================================================
 
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# --------------------------------------------------
+# ============================================================
+# LOGIN PAGE
+# ============================================================
+
+@app.route("/login")
+def login_page():
+    return render_template("login.html")
+
+
+# ============================================================
+# SIGNUP PAGE
+# ============================================================
+
+@app.route("/signup")
+def signup_page():
+    return render_template("signup.html")
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "application": "English Mentor AI"
+    })
+
+
+# ============================================================
 # CHAT API
-# --------------------------------------------------
+# ============================================================
 
 @app.route("/chat", methods=["POST"])
 def chat():
 
     try:
 
-        data = request.get_json()
+        # ----------------------------------------------------
+        # CHECK GEMINI CLIENT
+        # ----------------------------------------------------
 
-        if not data:
+        if client is None:
+
             return jsonify({
                 "success": False,
-                "error": "No data received."
+                "error": "Gemini API is not configured. Check your .env file."
+            }), 500
+
+
+        # ----------------------------------------------------
+        # GET REQUEST DATA
+        # ----------------------------------------------------
+
+        data = request.get_json(silent=True)
+
+        if not isinstance(data, dict):
+
+            return jsonify({
+                "success": False,
+                "error": "Invalid request data."
             }), 400
 
 
-        user_message = data.get("message", "").strip()
+        message = str(
+            data.get("message", "")
+        ).strip()
 
 
-        if not user_message:
+        level = str(
+            data.get("level", "Beginner")
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # VALIDATE MESSAGE
+        # ----------------------------------------------------
+
+        if not message:
+
             return jsonify({
                 "success": False,
                 "error": "Please enter a message."
             }), 400
 
 
-        # --------------------------------------------------
+        # ----------------------------------------------------
+        # LIMIT MESSAGE SIZE
+        # ----------------------------------------------------
+
+        if len(message) > 5000:
+
+            return jsonify({
+                "success": False,
+                "error": (
+                    "Message is too long. "
+                    "Please keep it under 5000 characters."
+                )
+            }), 400
+
+
+        # ----------------------------------------------------
+        # VALIDATE LEVEL
+        # ----------------------------------------------------
+
+        allowed_levels = [
+            "Beginner",
+            "Intermediate",
+            "Advanced"
+        ]
+
+        if level not in allowed_levels:
+            level = "Beginner"
+
+
+        # ----------------------------------------------------
+        # FIRST-LEVEL DOMAIN FILTER
+        # ----------------------------------------------------
+
+        if is_clearly_out_of_domain(message):
+
+            rejection_message = (
+                "Sorry! I'm English Mentor AI. "
+                "I can only help with English learning, grammar, "
+                "vocabulary, pronunciation, speaking, writing, "
+                "and communication skills."
+            )
+
+            print("=" * 60)
+            print("OUT-OF-DOMAIN QUESTION BLOCKED")
+            print("Question:", message)
+            print("=" * 60)
+
+            return jsonify({
+                "success": True,
+                "reply": rejection_message,
+                "level": level,
+                "domain_rejected": True
+            })
+
+
+        # ----------------------------------------------------
+        # LEVEL INSTRUCTION
+        # ----------------------------------------------------
+
+        level_instruction = f"""
+The learner's current English level is: {level}
+
+Adapt your response to this level.
+
+BEGINNER:
+- Use simple English.
+- Use short explanations.
+- Give easy examples.
+- Avoid unnecessarily difficult vocabulary.
+
+INTERMEDIATE:
+- Use natural conversational English.
+- Explain grammar and vocabulary clearly.
+- Give useful examples.
+
+ADVANCED:
+- Use sophisticated vocabulary when appropriate.
+- Explain grammar nuances.
+- Give natural and professional examples.
+"""
+
+
+        # ----------------------------------------------------
+        # FINAL GEMINI PROMPT
+        # ----------------------------------------------------
+
+        prompt = f"""
+{CHATBOT_SYSTEM_PROMPT}
+
+{level_instruction}
+
+============================================================
+FINAL DOMAIN INSTRUCTION
+============================================================
+
+You are NOT a general-purpose chatbot.
+
+You MUST ONLY answer questions related to:
+
+- English grammar
+- English vocabulary
+- English speaking
+- English writing
+- English pronunciation
+- English sentence correction
+- English conversation
+- English communication
+- English learning
+- English interview preparation
+- English practice
+
+If the user's question is unrelated to English learning,
+DO NOT answer the question.
+
+Instead respond politely:
+
+"Sorry! I'm English Mentor AI. I can only help with English
+learning, grammar, vocabulary, speaking, writing, pronunciation,
+and communication skills."
+
+Do not provide information about the unrelated topic.
+
+============================================================
+LEARNER MESSAGE
+============================================================
+
+{message}
+"""
+
+
+        # ----------------------------------------------------
         # GEMINI REQUEST
-        # --------------------------------------------------
+        # ----------------------------------------------------
 
         response = client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=user_message,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                temperature=0.7,
-                max_output_tokens=500
-            )
+            model="gemini-3.1-flash-lite",
+            contents=prompt
         )
 
 
-        ai_response = response.text
+        # ----------------------------------------------------
+        # EXTRACT COMPLETE RESPONSE
+        # ----------------------------------------------------
+
+        reply = ""
+
+        try:
+
+            if response is not None:
+                reply = response.text or ""
+
+        except Exception as text_error:
+
+            print(
+                "Response text extraction error:",
+                text_error
+            )
 
 
-        # --------------------------------------------------
-        # SAVE CHAT TO FIRESTORE
-        # --------------------------------------------------
-
-        chat_data = {
-            "user_message": user_message,
-            "ai_response": ai_response,
-            "timestamp": datetime.utcnow()
-        }
+        reply = str(reply).strip()
 
 
-        db.collection("chat_history").add(chat_data)
+        # ----------------------------------------------------
+        # CHECK EMPTY RESPONSE
+        # ----------------------------------------------------
+
+        if not reply:
+
+            print("=" * 60)
+            print("EMPTY GEMINI RESPONSE")
+            print("Raw response:", response)
+            print("=" * 60)
+
+            return jsonify({
+                "success": False,
+                "error": (
+                    "The AI returned an empty response. "
+                    "Please try again."
+                )
+            }), 500
 
 
-        # --------------------------------------------------
-        # RETURN RESPONSE
-        # --------------------------------------------------
+        # ----------------------------------------------------
+        # DEBUG RESPONSE
+        # ----------------------------------------------------
+
+        print("=" * 60)
+        print("GEMINI RESPONSE RECEIVED")
+        print("Response length:", len(reply))
+        print("Response preview:", reply[:300])
+        print("=" * 60)
+
+
+        # ----------------------------------------------------
+        # RETURN COMPLETE RESPONSE
+        # ----------------------------------------------------
 
         return jsonify({
             "success": True,
-            "response": ai_response
+            "reply": reply,
+            "level": level,
+            "domain_rejected": False
         })
 
 
     except Exception as e:
 
-        print("ERROR:", str(e))
+        print("=" * 60)
+        print("CHAT ERROR")
+        print("Error type:", type(e).__name__)
+        print("Error:", str(e))
+        print("=" * 60)
 
         return jsonify({
             "success": False,
-            "error": "Something went wrong. Please try again."
+            "error": (
+                "Sorry, I couldn't process your message "
+                "right now. Please try again."
+            )
         }), 500
 
 
-# --------------------------------------------------
+# ============================================================
+# 404 ERROR
+# ============================================================
+
+@app.errorhandler(404)
+def page_not_found(error):
+
+    return jsonify({
+        "success": False,
+        "error": "Page not found."
+    }), 404
+
+
+# ============================================================
+# 500 ERROR
+# ============================================================
+
+@app.errorhandler(500)
+def internal_server_error(error):
+
+    return jsonify({
+        "success": False,
+        "error": "Internal server error."
+    }), 500
+
+
+# ============================================================
 # RUN APPLICATION
-# --------------------------------------------------
+# ============================================================
 
 if __name__ == "__main__":
+
+    print("=" * 60)
+    print("English Mentor AI")
+    print("=" * 60)
+    print("Server: http://127.0.0.1:5000")
+    print("Login:  http://127.0.0.1:5000/login")
+    print("Signup: http://127.0.0.1:5000/signup")
+    print("=" * 60)
+
     app.run(
-        debug=True,
-        host="127.0.0.1",
-        port=5000
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=True
     )
